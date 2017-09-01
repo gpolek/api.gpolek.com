@@ -1,0 +1,288 @@
+---
+Conditions:
+  CreateVPC:
+    Fn::Equals:
+      - ${self:custom.vpc}
+      - true
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/24
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-vpc
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+  NatGatewayElasticIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateVPC
+    Properties:
+      Domain: VPC
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateVPC
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - NatGatewayElasticIP
+          - AllocationId
+      SubnetId:
+        Ref: SubnetPublic
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: CreateVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-internet-gateway
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: CreateVPC
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: InternetGateway
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVPC
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-route-table-private
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+  RouteToNatGateway:
+    Type: AWS::EC2::Route
+    Condition: CreateVPC
+    Properties:
+      RouteTableId:
+        Ref: RouteTablePrivate
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: NatGateway
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateVPC
+    Properties:
+      VpcId:
+        Ref: VPC
+  RouteToInternetGateway:
+    Type: AWS::EC2::Route
+    Condition: CreateVPC
+    Properties:
+      RouteTableId:
+        Ref: RouteTablePublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+  SubnetPublic:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.1.0.0/26
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-subnet-public
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+  SubnetPrivate:
+    Type: AWS::EC2::Subnet
+    Condition: CreateVPC
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock: 10.1.0.128/26
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-subnet-private
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+  SubnetPublicRouteTableInternetGateway:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId:
+        Ref: SubnetPublic
+      RouteTableId:
+        Ref: RouteTablePublic
+  SubnetPrivateRouteTableNatGateway:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateVPC
+    Properties:
+      SubnetId:
+        Ref: SubnetPrivate
+      RouteTableId:
+        Ref: RouteTablePrivate
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda security group
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: ${self:service}-${self:custom.stage}-lambda-security-group
+        - Key: Project
+          Value: ${self:custom.project}
+        - Key: Product
+          Value: ${self:custom.product}
+        - Key: Stage
+          Value: ${self:custom.stage}
+
+  EmailsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${self:service}-${self:custom.stage}-emails-queue
+      MessageRetentionPeriod: "1209600"
+      VisibilityTimeout: "60"
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - EmailsDeadLetterQueue
+            - Arn
+        maxReceiveCount: "10"
+  EmailsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${self:service}-${self:custom.stage}-emails-dead-letter-queue
+      MessageRetentionPeriod: "1209600"
+  EmailsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ${self:service}-${self:custom.stage}-emails-topic
+      Subscription:
+        - Protocol: sqs
+          Endpoint:
+            Fn::GetAtt:
+              - EmailsQueue
+              - Arn
+  EmailsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: EmailsQueuePolicy
+        Statement:
+        - Sid: Allow-SendMessage-To-EmailsQueue-From-EmailsTopic
+          Effect: Allow
+          Principal: "*"
+          Action:
+          - sqs:SendMessage
+          Resource: "*"
+          Condition:
+            ArnEquals:
+              aws:SourceArn:
+                Ref: EmailsTopic
+      Queues:
+      - Ref: EmailsQueue
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: ec2
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                Resource: "*"
+        - PolicyName: logs
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+        - PolicyName: apigateway
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource: arn:aws:apigateway:*::/apikeys
+        - PolicyName: sqs
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ChangeMessageVisibility
+                  - sqs:ChangeMessageVisibilityBatch
+                  - sqs:DeleteMessage
+                  - sqs:DeleteMessageBatch
+                  - sqs:ReceiveMessage
+                  - sqs:SendMessage
+                  - sqs:SendMessageBatch
+                Resource:
+                  - Fn::GetAtt:
+                      - EmailsQueue
+                      - Arn
+        - PolicyName: sns
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  Fn::Join:
+                      - ":"
+                      - - arn:aws:sns
+                        - Ref: AWS::Region
+                        - Ref: AWS::AccountId
+                        - ${self:service}-${self:custom.stage}-*
+        - PolicyName: ses
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                Resource: arn:aws:ses:${self:custom.region}:${self:custom.accountId}:identity/${self:custom.email}
+        - PolicyName: lambda
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - lambda:InvokeAsync
+                Resource: arn:aws:lambda:*:*:function:*

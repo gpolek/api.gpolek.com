@@ -1,0 +1,3 @@
+node_modules
+stages/*.yml
+*.log

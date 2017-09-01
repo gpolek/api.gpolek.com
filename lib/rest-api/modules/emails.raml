@@ -1,0 +1,9 @@
+/:
+  get:
+    is: [ secured: { who: "Email" } ]
+    description: Send e-mail
+    responses:
+      200:
+        body:
+          application/json:
+            type: Email
