@@ -1,4 +1,4 @@
-# api.gpolek.com
+# api.gpolek.com [![Build Status](https://travis-ci.org/gpolek/api.gpolek.com.svg?branch=master)](https://travis-ci.org/gpolek/api.gpolek.com)
 
 Serverless API using AWS Lambda hosted under api.gpolek.com for gpolek.com and grzegorzpolek.com purposes
 

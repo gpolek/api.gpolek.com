@@ -3,7 +3,7 @@
 const test = require('tape')
 const yaml = require('yamljs')
 
-const config = require('../lib/config')
+const config = require('../config/config')
 
 test('All environment variables passed from serveless to functions should be exposed by config.js', assert => {
   const env = yaml.load(__dirname + '/../serverless.yml').provider.environment
